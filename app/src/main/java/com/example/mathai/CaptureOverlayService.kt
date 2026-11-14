@@ -1,3 +1,4 @@
+
 package com.example.mathai
 
 import android.app.Notification
@@ -20,236 +21,288 @@ import android.view.Gravity
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
+import android.graphics.Color
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 
 class CaptureOverlayService : Service() {
 
-private var projection: MediaProjection? = null  
-private var virtualDisplay: VirtualDisplay? = null  
-private var imageReader: ImageReader? = null  
-private var overlay: LinearLayout? = null  
-private var resultText: TextView? = null  
-private var handlerThread: HandlerThread? = null  
+    private var projection: MediaProjection? = null
+    private var virtualDisplay: VirtualDisplay? = null
+    private var imageReader: ImageReader? = null
+    private var overlay: LinearLayout? = null
+    private var resultText: TextView? = null
+    private var handlerThread: HandlerThread? = null
+    private var isReading = false
 
-private lateinit var windowManager: WindowManager  
+    private lateinit var windowManager: WindowManager
 
-override fun onCreate() {  
-    super.onCreate()  
-    windowManager = getSystemService(WINDOW_SERVICE) as WindowManager  
-    createNotificationChannel()  
-    startForeground(1, createNotification())  
-    createOverlay()  
-}  
+    override fun onCreate() {
+        super.onCreate()
 
-override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {  
-    val resultCode = intent?.getIntExtra("resultCode", 0) ?: 0  
+        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
 
-    @Suppress("DEPRECATION")  
-    val data = intent?.getParcelableExtra<Intent>("data")  
+        createNotificationChannel()
+        startForeground(1, createNotification())
+        createOverlay()
+    }
 
-    if (data == null || resultCode == 0) {  
-        stopSelf()  
-        return START_NOT_STICKY  
-    }  
+    override fun onStartCommand(
+        intent: Intent?,
+        flags: Int,
+        startId: Int
+    ): Int {
 
-    val manager = getSystemService(MEDIA_PROJECTION_SERVICE)  
-            as MediaProjectionManager  
+        val resultCode = intent?.getIntExtra("resultCode", 0) ?: 0
 
-    projection = manager.getMediaProjection(resultCode, data)  
+        @Suppress("DEPRECATION")
+        val data = intent?.getParcelableExtra<Intent>("data")
 
-    startCapture()  
+        if (data == null || resultCode == 0) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
-    return START_NOT_STICKY  
-}  
+        val manager = getSystemService(MEDIA_PROJECTION_SERVICE)
+                as MediaProjectionManager
 
-private fun startCapture() {  
-    val metrics = resources.displayMetrics  
-    val width = metrics.widthPixels  
-    val height = metrics.heightPixels  
-    val density = metrics.densityDpi  
+        projection = manager.getMediaProjection(resultCode, data)
 
-    handlerThread = HandlerThread("ScreenCapture").apply { start() }  
+        startCapture()
 
-    imageReader = ImageReader.newInstance(  
-        width,  
-        height,  
-        PixelFormat.RGBA_8888,  
-        2  
-    )  
+        return START_NOT_STICKY
+    }
 
-    virtualDisplay = projection?.createVirtualDisplay(  
-        "MathAssistant",  
-        width,  
-        height,  
-        density,  
-        DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,  
-        imageReader?.surface,  
-        null,  
-        Handler(handlerThread!!.looper)  
-    )  
-}  
+    private fun startCapture() {
 
-private fun createOverlay() {  
-    val layout = LinearLayout(this).apply {  
-        orientation = LinearLayout.VERTICAL  
-        setPadding(20, 12, 20, 12)  
-        setBackgroundColor(0xEE102437.toInt())  
-    }  
+        val metrics = resources.displayMetrics
+        val width = metrics.widthPixels
+        val height = metrics.heightPixels
+        val density = metrics.densityDpi
 
-    resultText = TextView(this).apply {  
-        text = "Math AI Assistant"  
-        textSize = 18f  
-        setTextColor(0xFFFFFFFF.toInt())  
-    }  
+        handlerThread = HandlerThread("ScreenCapture").apply {
+            start()
+        }
 
-    val scanButton = Button(this).apply {  
-        text = "اقرأ الآن"  
-        setOnClickListener {  
-            captureAndRead()  
-        }  
-    }  
+        imageReader = ImageReader.newInstance(
+            width,
+            height,
+            PixelFormat.RGBA_8888,
+            3
+        )
 
-    val closeButton = Button(this).apply {  
-        text = "إغلاق"  
-        setOnClickListener {  
-            stopSelf()  
-        }  
-    }  
+        virtualDisplay = projection?.createVirtualDisplay(
+            "MathAssistant",
+            width,
+            height,
+            density,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            imageReader?.surface,
+            null,
+            Handler(handlerThread!!.looper)
+        )
+    }
 
-    layout.addView(resultText)  
-    layout.addView(scanButton)  
-    layout.addView(closeButton)  
+    private fun createOverlay() {
 
-    overlay = layout  
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(20, 12, 20, 12)
+            setBackgroundColor(Color.rgb(16, 36, 55))
+        }
 
-    val params = WindowManager.LayoutParams(  
-        WindowManager.LayoutParams.WRAP_CONTENT,  
-        WindowManager.LayoutParams.WRAP_CONTENT,  
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)  
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY  
-        else  
-            WindowManager.LayoutParams.TYPE_PHONE,  
-        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,  
-        PixelFormat.TRANSLUCENT  
-    ).apply {  
-        gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL  
-        y = 100  
-    }  
+        resultText = TextView(this).apply {
+            text = "Math AI Assistant\nجاهز لقراءة الشاشة"
+            textSize = 16f
+            setTextColor(Color.WHITE)
+        }
 
-    if (Settings.canDrawOverlays(this)) {  
-        windowManager.addView(layout, params)  
-    }  
-}  
+        val scrollView = ScrollView(this).apply {
+            addView(resultText)
+        }
 
-private fun captureAndRead() {  
-    val reader = imageReader ?: return  
+        val scanButton = Button(this).apply {
+            text = "اقرأ الآن"
+            setOnClickListener {
+                captureAndRead()
+            }
+        }
 
-    try {  
-        val image = reader.acquireLatestImage() ?: return  
+        val closeButton = Button(this).apply {
+            text = "إغلاق"
+            setOnClickListener {
+                stopSelf()
+            }
+        }
 
-        val bitmap = android.graphics.Bitmap.createBitmap(  
-            image.width,  
-            image.height,  
-            android.graphics.Bitmap.Config.ARGB_8888  
-        )  
+        layout.addView(scrollView)
+        layout.addView(scanButton)
+        layout.addView(closeButton)
 
-        val plane = image.planes[0]  
-        val buffer = plane.buffer  
-        val pixelStride = plane.pixelStride  
-        val rowStride = plane.rowStride  
-        val rowPadding = rowStride - pixelStride * image.width  
+        overlay = layout
 
-        val paddedBitmap = android.graphics.Bitmap.createBitmap(  
-            image.width + rowPadding / pixelStride,  
-            image.height,  
-            android.graphics.Bitmap.Config.ARGB_8888  
-        )  
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else
+                WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            y = 100
+            width = (resources.displayMetrics.widthPixels * 0.85).toInt()
+        }
 
-        paddedBitmap.copyPixelsFromBuffer(buffer)  
+        if (Settings.canDrawOverlays(this)) {
+            windowManager.addView(layout, params)
+        }
+    }
 
-        val croppedBitmap = android.graphics.Bitmap.createBitmap(  
-            paddedBitmap,  
-            0,  
-            0,  
-            image.width,  
-            image.height  
-        )  
+    private fun captureAndRead() {
 
-        image.close()  
+        if (isReading) return
 
-        val inputImage = InputImage.fromBitmap(croppedBitmap, 0)  
-        val recognizer = TextRecognition.getClient(  
-            TextRecognizerOptions.DEFAULT_OPTIONS  
-        )  
+        val reader = imageReader ?: run {
+            resultText?.text = "قارئ الشاشة غير جاهز"
+            return
+        }
 
-        recognizer.process(inputImage)  
-            .addOnSuccessListener { result ->  
-                val answer = MathSolver.solve(result.text)  
+        try {
+            val image = reader.acquireLatestImage()
 
-                resultText?.text = when (answer) {  
-                    true -> "✓ صحيحة"  
-                    false -> "✕ خاطئة"  
-                    null -> "لم أتعرف على المسألة"  
-                }  
+            if (image == null) {
+                resultText?.text = "انتظر لحظة ثم اضغط اقرأ الآن مرة أخرى"
+                return
+            }
 
-                recognizer.close()  
-            }  
-            .addOnFailureListener {  
-                resultText?.text = "تعذر قراءة الشاشة"  
-                recognizer.close()  
-            }  
+            isReading = true
+            resultText?.text = "جاري قراءة الشاشة..."
 
-    } catch (e: Exception) {  
-        resultText?.text = "حدث خطأ أثناء القراءة"  
-    }  
-}  
+            val plane = image.planes[0]
+            val buffer = plane.buffer
+            val pixelStride = plane.pixelStride
+            val rowStride = plane.rowStride
+            val rowPadding = rowStride - pixelStride * image.width
 
-private fun createNotificationChannel() {  
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {  
-        val channel = NotificationChannel(  
-            "math_assistant",  
-            "Math Assistant",  
-            NotificationManager.IMPORTANCE_LOW  
-        )  
+            val paddedBitmap = android.graphics.Bitmap.createBitmap(
+                image.width + rowPadding / pixelStride,
+                image.height,
+                android.graphics.Bitmap.Config.ARGB_8888
+            )
 
-        val manager = getSystemService(NotificationManager::class.java)  
-        manager.createNotificationChannel(channel)  
-    }  
-}  
+            buffer.rewind()
+            paddedBitmap.copyPixelsFromBuffer(buffer)
 
-private fun createNotification(): Notification {  
-    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {  
-        Notification.Builder(this, "math_assistant")  
-            .setContentTitle("Math AI Assistant")  
-            .setContentText("المساعد يعمل")  
-            .setSmallIcon(android.R.drawable.ic_menu_view)  
-            .build()  
-    } else {  
-        @Suppress("DEPRECATION")  
-        Notification.Builder(this)  
-            .setContentTitle("Math AI Assistant")  
-            .setContentText("المساعد يعمل")  
-            .setSmallIcon(android.R.drawable.ic_menu_view)  
-            .build()  
-    }  
-}  
+            val croppedBitmap = android.graphics.Bitmap.createBitmap(
+                paddedBitmap,
+                0,
+                0,
+                image.width,
+                image.height
+            )
 
-override fun onDestroy() {  
-    super.onDestroy()  
+            image.close()
+            paddedBitmap.recycle()
 
-    overlay?.let {  
-        windowManager.removeView(it)  
-    }  
+            val inputImage = InputImage.fromBitmap(croppedBitmap, 0)
 
-    virtualDisplay?.release()  
-    imageReader?.close()  
-    projection?.stop()  
-    handlerThread?.quitSafely()  
-}  
+            val recognizer = TextRecognition.getClient(
+                TextRecognizerOptions.DEFAULT_OPTIONS
+            )
 
-override fun onBind(intent: Intent?): IBinder? = null
+            recognizer.process(inputImage)
+                .addOnSuccessListener { result ->
 
+                    val recognizedText = result.text
+
+                    resultText?.text = if (recognizedText.isBlank()) {
+                        "لم يتم استخراج أي نص من الشاشة"
+                    } else {
+                        "النص المقروء:\n\n$recognizedText"
+                    }
+
+                    isReading = false
+                    recognizer.close()
+                    croppedBitmap.recycle()
+                }
+                .addOnFailureListener { error ->
+
+                    resultText?.text =
+                        "خطأ OCR:\n${error.message ?: "خطأ غير معروف"}"
+
+                    isReading = false
+                    recognizer.close()
+                    croppedBitmap.recycle()
+                }
+
+        } catch (e: Exception) {
+
+            resultText?.text =
+                "حدث خطأ:\n${e.message ?: "خطأ غير معروف"}"
+
+            isReading = false
+        }
+    }
+
+    private fun createNotificationChannel() {
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+
+            val channel = NotificationChannel(
+                "math_assistant",
+                "Math Assistant",
+                NotificationManager.IMPORTANCE_LOW
+            )
+
+            val manager =
+                getSystemService(NotificationManager::class.java)
+
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun createNotification(): Notification {
+
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+
+            Notification.Builder(this, "math_assistant")
+                .setContentTitle("Math AI Assistant")
+                .setContentText("المساعد يعمل")
+                .setSmallIcon(android.R.drawable.ic_menu_view)
+                .build()
+
+        } else {
+
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+                .setContentTitle("Math AI Assistant")
+                .setContentText("المساعد يعمل")
+                .setSmallIcon(android.R.drawable.ic_menu_view)
+                .build()
+        }
+    }
+
+    override fun onDestroy() {
+
+        super.onDestroy()
+
+        overlay?.let {
+            if (it.isAttachedToWindow) {
+                windowManager.removeView(it)
+            }
+        }
+
+        virtualDisplay?.release()
+        imageReader?.close()
+        projection?.stop()
+        handlerThread?.quitSafely()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
 }
