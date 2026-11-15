@@ -1,4 +1,3 @@
-
 package com.example.mathai
 
 import android.app.Notification
@@ -7,6 +6,7 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
 import android.graphics.PixelFormat
+import android.graphics.Color
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
@@ -16,14 +16,14 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
+import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
-import android.graphics.Color
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
@@ -35,8 +35,12 @@ class CaptureOverlayService : Service() {
     private var imageReader: ImageReader? = null
     private var overlay: LinearLayout? = null
     private var resultText: TextView? = null
-    private var handlerThread: HandlerThread? = null
+    private var overlayParams: WindowManager.LayoutParams? = null
+    private var overlayVisible = false
     private var isReading = false
+
+    private var handlerThread: HandlerThread? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private lateinit var windowManager: WindowManager
 
@@ -110,22 +114,26 @@ class CaptureOverlayService : Service() {
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(20, 12, 20, 12)
+            setPadding(18, 12, 18, 12)
             setBackgroundColor(Color.rgb(16, 36, 55))
         }
 
-        resultText = TextView(this).apply {
-            text = "Math AI Assistant\nجاهز لقراءة الشاشة"
-            textSize = 16f
+        val title = TextView(this).apply {
+            text = "Math AI Assistant  ⋮ اسحب لتحريك النافذة"
+            textSize = 15f
             setTextColor(Color.WHITE)
+            setPadding(4, 4, 4, 12)
         }
 
-        val scrollView = ScrollView(this).apply {
-            addView(resultText)
+        resultText = TextView(this).apply {
+            text = "جاهز لقراءة السؤال"
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            setPadding(4, 8, 4, 8)
         }
 
         val scanButton = Button(this).apply {
-            text = "اقرأ الآن"
+            text = "اقرأ السؤال"
             setOnClickListener {
                 captureAndRead()
             }
@@ -138,7 +146,8 @@ class CaptureOverlayService : Service() {
             }
         }
 
-        layout.addView(scrollView)
+        layout.addView(title)
+        layout.addView(resultText)
         layout.addView(scanButton)
         layout.addView(closeButton)
 
@@ -154,13 +163,72 @@ class CaptureOverlayService : Service() {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            y = 100
+            gravity = Gravity.TOP or Gravity.START
+            x = 20
+            y = 120
             width = (resources.displayMetrics.widthPixels * 0.85).toInt()
         }
 
-        if (Settings.canDrawOverlays(this)) {
-            windowManager.addView(layout, params)
+        overlayParams = params
+
+        // تحريك النافذة من شريط العنوان
+        var startX = 0
+        var startY = 0
+        var touchX = 0f
+        var touchY = 0f
+
+        title.setOnTouchListener { _, event ->
+
+            when (event.action) {
+
+                MotionEvent.ACTION_DOWN -> {
+                    startX = params.x
+                    startY = params.y
+                    touchX = event.rawX
+                    touchY = event.rawY
+                    true
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    params.x = startX + (event.rawX - touchX).toInt()
+                    params.y = startY + (event.rawY - touchY).toInt()
+
+                    if (overlayVisible) {
+                        windowManager.updateViewLayout(layout, params)
+                    }
+                    true
+                }
+
+                else -> false
+            }
+        }
+
+        showOverlay()
+    }
+
+    private fun showOverlay() {
+        val view = overlay ?: return
+
+        if (!overlayVisible && Settings.canDrawOverlays(this)) {
+            try {
+                windowManager.addView(view, overlayParams)
+                overlayVisible = true
+            } catch (e: Exception) {
+                resultText?.text = "تعذر إظهار النافذة"
+            }
+        }
+    }
+
+    private fun hideOverlay() {
+        val view = overlay ?: return
+
+        if (overlayVisible) {
+            try {
+                windowManager.removeView(view)
+                overlayVisible = false
+            } catch (e: Exception) {
+                overlayVisible = false
+            }
         }
     }
 
@@ -168,86 +236,127 @@ class CaptureOverlayService : Service() {
 
         if (isReading) return
 
-        val reader = imageReader ?: run {
+        val reader = imageReader
+
+        if (reader == null) {
             resultText?.text = "قارئ الشاشة غير جاهز"
             return
         }
 
-        try {
-            val image = reader.acquireLatestImage()
+        isReading = true
+        resultText?.text = "جاري تجهيز الصورة..."
 
-            if (image == null) {
-                resultText?.text = "انتظر لحظة ثم اضغط اقرأ الآن مرة أخرى"
-                return
-            }
+        // إخفاء النافذة حتى لا تدخل في صورة السؤال
+        hideOverlay()
 
-            isReading = true
-            resultText?.text = "جاري قراءة الشاشة..."
+        // انتظار لحظة حتى تختفي النافذة من الصورة
+        mainHandler.postDelayed({
 
-            val plane = image.planes[0]
-            val buffer = plane.buffer
-            val pixelStride = plane.pixelStride
-            val rowStride = plane.rowStride
-            val rowPadding = rowStride - pixelStride * image.width
+            try {
 
-            val paddedBitmap = android.graphics.Bitmap.createBitmap(
-                image.width + rowPadding / pixelStride,
-                image.height,
-                android.graphics.Bitmap.Config.ARGB_8888
-            )
+                val image = reader.acquireLatestImage()
 
-            buffer.rewind()
-            paddedBitmap.copyPixelsFromBuffer(buffer)
+                if (image == null) {
+                    resultText?.text =
+                        "لم تصل صورة الشاشة، حاول مرة أخرى"
 
-            val croppedBitmap = android.graphics.Bitmap.createBitmap(
-                paddedBitmap,
-                0,
-                0,
-                image.width,
-                image.height
-            )
+                    isReading = false
+                    showOverlay()
+                    return@postDelayed
+                }
 
-            image.close()
-            paddedBitmap.recycle()
+                val plane = image.planes[0]
+                val buffer = plane.buffer
+                val pixelStride = plane.pixelStride
+                val rowStride = plane.rowStride
+                val rowPadding = rowStride - pixelStride * image.width
 
-            val inputImage = InputImage.fromBitmap(croppedBitmap, 0)
+                val paddedBitmap = android.graphics.Bitmap.createBitmap(
+                    image.width + rowPadding / pixelStride,
+                    image.height,
+                    android.graphics.Bitmap.Config.ARGB_8888
+                )
 
-            val recognizer = TextRecognition.getClient(
-                TextRecognizerOptions.DEFAULT_OPTIONS
-            )
+                buffer.rewind()
+                paddedBitmap.copyPixelsFromBuffer(buffer)
 
-            recognizer.process(inputImage)
-                .addOnSuccessListener { result ->
+                val fullBitmap = android.graphics.Bitmap.createBitmap(
+                    paddedBitmap,
+                    0,
+                    0,
+                    image.width,
+                    image.height
+                )
 
-                    val recognizedText = result.text
+                image.close()
+                paddedBitmap.recycle()
 
-                    resultText?.text = if (recognizedText.isBlank()) {
-                        "لم يتم استخراج أي نص من الشاشة"
-                    } else {
-                        "النص المقروء:\n\n$recognizedText"
+                // منطقة السؤال التقريبية في تصميم اللعبة
+                val cropX = (fullBitmap.width * 0.12).toInt()
+                val cropY = (fullBitmap.height * 0.28).toInt()
+                val cropWidth = (fullBitmap.width * 0.76).toInt()
+                val cropHeight = (fullBitmap.height * 0.27).toInt()
+
+                val questionBitmap = android.graphics.Bitmap.createBitmap(
+                    fullBitmap,
+                    cropX,
+                    cropY,
+                    cropWidth,
+                    cropHeight
+                )
+
+                fullBitmap.recycle()
+
+                // إعادة النافذة بعد التقاط الصورة
+                showOverlay()
+
+                resultText?.text = "جاري قراءة السؤال..."
+
+                val inputImage = InputImage.fromBitmap(
+                    questionBitmap,
+                    0
+                )
+
+                val recognizer = TextRecognition.getClient(
+                    TextRecognizerOptions.DEFAULT_OPTIONS
+                )
+
+                recognizer.process(inputImage)
+                    .addOnSuccessListener { result ->
+
+                        val recognizedText = result.text
+                        val answer = MathSolver.solve(recognizedText)
+
+                        resultText?.text = when (answer) {
+                            true -> "✓ العبارة صحيحة"
+                            false -> "✕ العبارة خاطئة"
+                            null -> "لم أفهم السؤال:\n$recognizedText"
+                        }
+
+                        isReading = false
+                        recognizer.close()
+                        questionBitmap.recycle()
+                    }
+                    .addOnFailureListener { error ->
+
+                        resultText?.text =
+                            "خطأ في قراءة السؤال:\n${error.message}"
+
+                        isReading = false
+                        recognizer.close()
+                        questionBitmap.recycle()
                     }
 
-                    isReading = false
-                    recognizer.close()
-                    croppedBitmap.recycle()
-                }
-                .addOnFailureListener { error ->
+            } catch (e: Exception) {
 
-                    resultText?.text =
-                        "خطأ OCR:\n${error.message ?: "خطأ غير معروف"}"
+                resultText?.text =
+                    "حدث خطأ:\n${e.message ?: "خطأ غير معروف"}"
 
-                    isReading = false
-                    recognizer.close()
-                    croppedBitmap.recycle()
-                }
+                isReading = false
+                showOverlay()
+            }
 
-        } catch (e: Exception) {
-
-            resultText?.text =
-                "حدث خطأ:\n${e.message ?: "خطأ غير معروف"}"
-
-            isReading = false
-        }
+        }, 350)
     }
 
     private fun createNotificationChannel() {
@@ -289,19 +398,14 @@ class CaptureOverlayService : Service() {
     }
 
     override fun onDestroy() {
-
         super.onDestroy()
 
-        overlay?.let {
-            if (it.isAttachedToWindow) {
-                windowManager.removeView(it)
-            }
-        }
-
+        hideOverlay()
         virtualDisplay?.release()
         imageReader?.close()
         projection?.stop()
         handlerThread?.quitSafely()
+        mainHandler.removeCallbacksAndMessages(null)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
