@@ -8,33 +8,39 @@ object MathSolver {
                 .replace("×", "*")
                 .replace("÷", "/")
                 .replace("−", "-")
+                .replace("–", "-")
                 .replace("＝", "=")
                 .replace(",", ".")
+                .replace("٫", ".")
                 .replace(" ", "")
 
-            val operators = listOf(">=", "<=", ">", "<", "=", "==")
+            val pattern = Regex(
+                """([0-9().+\-*/]+)(>=|<=|>|<|==|=)([0-9().+\-*/]+)"""
+            )
 
-            for (op in operators) {
-                val index = text.indexOf(op)
-                if (index > 0) {
-                    val left = text.substring(0, index)
-                    val right = text.substring(index + op.length)
+            val matches = pattern.findAll(text).toList()
 
-                    val a = calculate(left) ?: return null
-                    val b = calculate(right) ?: return null
+            if (matches.isEmpty()) return null
 
-                    return when (op) {
-                        ">" -> a > b
-                        "<" -> a < b
-                        ">=" -> a >= b
-                        "<=" -> a <= b
-                        "=", "==" -> a == b
-                        else -> null
-                    }
-                }
+            // نأخذ آخر مقارنة ظهرت في النص
+            val match = matches.last()
+
+            val left = match.groupValues[1]
+            val operator = match.groupValues[2]
+            val right = match.groupValues[3]
+
+            val a = calculate(left) ?: return null
+            val b = calculate(right) ?: return null
+
+            when (operator) {
+                ">" -> a > b
+                "<" -> a < b
+                ">=" -> a >= b
+                "<=" -> a <= b
+                "=", "==" -> a == b
+                else -> null
             }
 
-            null
         } catch (e: Exception) {
             null
         }
@@ -55,9 +61,11 @@ object MathSolver {
 
         fun parse(): Double {
             val result = expression()
+
             if (position != input.length) {
                 throw IllegalArgumentException("Invalid expression")
             }
+
             return result
         }
 
@@ -70,10 +78,12 @@ object MathSolver {
                         position++
                         value += term()
                     }
+
                     '-' -> {
                         position++
                         value -= term()
                     }
+
                     else -> return value
                 }
             }
@@ -90,14 +100,18 @@ object MathSolver {
                         position++
                         value *= factor()
                     }
+
                     '/' -> {
                         position++
                         val divisor = factor()
+
                         if (divisor == 0.0) {
                             throw ArithmeticException("Division by zero")
                         }
+
                         value /= divisor
                     }
+
                     else -> return value
                 }
             }
@@ -122,6 +136,7 @@ object MathSolver {
 
             if (input[position] == '(') {
                 position++
+
                 val value = expression()
 
                 if (position >= input.length || input[position] != ')') {
@@ -134,7 +149,8 @@ object MathSolver {
 
             val start = position
 
-            while (position < input.length &&
+            while (
+                position < input.length &&
                 (input[position].isDigit() || input[position] == '.')
             ) {
                 position++
